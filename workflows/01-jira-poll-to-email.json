@@ -1,5 +1,5 @@
 {
-  "name": "01 — Jira Poll → Slack (cadrage tickets design)",
+  "name": "01 — Jira Poll → Email (cadrage tickets design)",
   "nodes": [
     {
       "parameters": {
@@ -27,8 +27,20 @@
           "assignments": [
             {
               "id": "a1",
-              "name": "slackWebhookUrl",
-              "value": "https://hooks.slack.com/services/REPLACE/ME/HERE",
+              "name": "recipientEmail",
+              "value": "ton.email@rmcbfm.fr",
+              "type": "string"
+            },
+            {
+              "id": "a1b",
+              "name": "senderEmail",
+              "value": "onboarding@resend.dev",
+              "type": "string"
+            },
+            {
+              "id": "a1c",
+              "name": "senderName",
+              "value": "Cadrage Design Bot",
               "type": "string"
             },
             {
@@ -224,7 +236,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Parse la réponse de Claude et construit l'URL du formulaire\n\nconst claudeResponse = $input.item.json;\nconst rawText = claudeResponse?.content?.[0]?.text || '';\n\n// Tentative robuste de parsing : Claude peut parfois entourer de markdown\nlet questions = [];\ntry {\n  // Cherche le premier { et le dernier } pour extraire le JSON même si entouré de texte\n  const firstBrace = rawText.indexOf('{');\n  const lastBrace = rawText.lastIndexOf('}');\n  if (firstBrace === -1 || lastBrace === -1) throw new Error('Pas de JSON trouvé');\n  const jsonStr = rawText.substring(firstBrace, lastBrace + 1);\n  const parsed = JSON.parse(jsonStr);\n  questions = parsed.questions || [];\n} catch (e) {\n  // Fallback : on découpe par lignes commençant par - ou *\n  questions = rawText\n    .split('\\n')\n    .map(l => l.replace(/^[-*\\d.\\s]+/, '').trim())\n    .filter(l => l.endsWith('?') && l.length > 10);\n}\n\nif (questions.length === 0) {\n  questions = ['(Erreur de génération — pose tes questions à la main)'];\n}\n\n// Récupère les infos du ticket depuis le node Prepare\nconst prep = $('Code: Prepare + flatten').item.json;\nconst config = $('Set: Config').first().json;\n\n// Encode payload pour le formulaire\nconst payload = {\n  k: prep.issueKey,\n  s: prep.summary,\n  r: prep.reporterAccountId,\n  rn: prep.reporterName,\n  q: questions,\n};\nconst dataParam = Buffer.from(JSON.stringify(payload), 'utf-8').toString('base64url');\nconst formFullUrl = `${config.formUrl}?data=${dataParam}`;\n\n// Tronque la description pour Slack (limite 3000 chars par bloc)\nconst descShort = prep.descriptionText.length > 1500\n  ? prep.descriptionText.substring(0, 1500) + '…'\n  : prep.descriptionText;\n\nreturn {\n  json: {\n    issueKey: prep.issueKey,\n    issueUrl: prep.issueUrl,\n    summary: prep.summary,\n    reporterName: prep.reporterName,\n    descriptionShort: descShort,\n    questions,\n    questionsBulleted: questions.map((q, i) => `${i + 1}. ${q}`).join('\\n'),\n    formFullUrl,\n    slackWebhookUrl: config.slackWebhookUrl,\n  },\n};\n"
+        "jsCode": "// Parse la réponse de Claude et construit le HTML de l'email\n\nconst claudeResponse = $input.item.json;\nconst rawText = claudeResponse?.content?.[0]?.text || '';\n\n// Parsing robuste : Claude peut parfois entourer de markdown\nlet questions = [];\ntry {\n  const firstBrace = rawText.indexOf('{');\n  const lastBrace = rawText.lastIndexOf('}');\n  if (firstBrace === -1 || lastBrace === -1) throw new Error('Pas de JSON trouvé');\n  const jsonStr = rawText.substring(firstBrace, lastBrace + 1);\n  const parsed = JSON.parse(jsonStr);\n  questions = parsed.questions || [];\n} catch (e) {\n  questions = rawText\n    .split('\\n')\n    .map(l => l.replace(/^[-*\\d.\\s]+/, '').trim())\n    .filter(l => l.endsWith('?') && l.length > 10);\n}\n\nif (questions.length === 0) {\n  questions = ['(Erreur de génération — pose tes questions à la main)'];\n}\n\nconst prep = $('Code: Prepare + flatten').item.json;\nconst config = $('Set: Config').first().json;\n\n// Encode payload pour le formulaire\nconst payload = {\n  k: prep.issueKey,\n  s: prep.summary,\n  r: prep.reporterAccountId,\n  rn: prep.reporterName,\n  q: questions,\n};\nconst dataParam = Buffer.from(JSON.stringify(payload), 'utf-8').toString('base64url');\nconst formFullUrl = `${config.formUrl}?data=${dataParam}`;\n\n// Tronque la description pour l'email\nconst descShort = prep.descriptionText.length > 2000\n  ? prep.descriptionText.substring(0, 2000) + '…'\n  : prep.descriptionText;\n\nconst esc = (s) => String(s)\n  .replace(/&/g, '&amp;')\n  .replace(/</g, '&lt;')\n  .replace(/>/g, '&gt;')\n  .replace(/\"/g, '&quot;')\n  .replace(/'/g, '&#39;');\n\nconst questionsListHtml = questions\n  .map(q => `<li style=\"margin-bottom:8px;line-height:1.5\">${esc(q)}</li>`)\n  .join('');\n\nconst descriptionHtml = esc(descShort).replace(/\\n/g, '<br>');\n\nconst emailHtml = `<!DOCTYPE html>\n<html lang=\"fr\">\n<head><meta charset=\"utf-8\"></head>\n<body style=\"margin:0;padding:0;background:#f4f5f7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#172b4d\">\n  <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#f4f5f7;padding:32px 16px\">\n    <tr><td align=\"center\">\n      <table role=\"presentation\" width=\"640\" cellpadding=\"0\" cellspacing=\"0\" style=\"max-width:640px;background:#ffffff;border-radius:8px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.08)\">\n        <tr><td style=\"background:#0052cc;padding:20px 32px;color:#ffffff\">\n          <div style=\"font-size:13px;opacity:0.85;letter-spacing:0.5px;text-transform:uppercase\">🎨 Nouveau ticket à cadrer</div>\n          <div style=\"font-size:14px;margin-top:4px;opacity:0.9\">${esc(prep.issueKey)}</div>\n        </td></tr>\n        <tr><td style=\"padding:32px\">\n          <h1 style=\"margin:0 0 24px;font-size:22px;line-height:1.3;color:#172b4d\">${esc(prep.summary)}</h1>\n          <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"margin-bottom:24px\">\n            <tr>\n              <td style=\"padding:0 8px 0 0;width:50%;vertical-align:top\">\n                <div style=\"font-size:12px;text-transform:uppercase;color:#6b778c;letter-spacing:0.5px;margin-bottom:4px\">Rapporteur</div>\n                <div style=\"font-size:15px;color:#172b4d\">${esc(prep.reporterName)}</div>\n              </td>\n              <td style=\"padding:0 0 0 8px;width:50%;vertical-align:top\">\n                <div style=\"font-size:12px;text-transform:uppercase;color:#6b778c;letter-spacing:0.5px;margin-bottom:4px\">Ticket</div>\n                <div style=\"font-size:15px\"><a href=\"${esc(prep.issueUrl)}\" style=\"color:#0052cc;text-decoration:none\">Voir sur Jira →</a></div>\n              </td>\n            </tr>\n          </table>\n          <div style=\"font-size:12px;text-transform:uppercase;color:#6b778c;letter-spacing:0.5px;margin-bottom:8px\">Description</div>\n          <div style=\"background:#f4f5f7;padding:16px;border-radius:6px;font-size:14px;line-height:1.6;color:#172b4d;margin-bottom:24px\">${descriptionHtml}</div>\n          <div style=\"font-size:12px;text-transform:uppercase;color:#6b778c;letter-spacing:0.5px;margin-bottom:8px\">Questions proposées par l'IA</div>\n          <ol style=\"margin:0 0 24px;padding-left:24px;font-size:14px;color:#172b4d\">${questionsListHtml}</ol>\n          <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\"><tr><td align=\"center\" style=\"padding:8px 0 0\">\n            <a href=\"${esc(formFullUrl)}\" style=\"display:inline-block;background:#0052cc;color:#ffffff;text-decoration:none;padding:14px 28px;border-radius:6px;font-size:15px;font-weight:600\">✅ Choisir mes questions →</a>\n          </td></tr></table>\n          <p style=\"text-align:center;font-size:12px;color:#6b778c;margin:16px 0 0\">Le bouton ouvre un formulaire web où tu peux cocher / décocher les questions et en ajouter à la main avant de poster sur Jira.</p>\n        </td></tr>\n      </table>\n    </td></tr>\n  </table>\n</body>\n</html>`;\n\nreturn {\n  json: {\n    issueKey: prep.issueKey,\n    summary: prep.summary,\n    emailSubject: `[Cadrage] ${prep.issueKey} — ${prep.summary}`,\n    emailHtml,\n    recipientEmail: config.recipientEmail,\n    senderEmail: config.senderEmail,\n    senderName: config.senderName,\n  },\n};\n"
       },
       "id": "node-parse",
       "name": "Code: Parse + Build Form URL",
@@ -238,20 +250,37 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ $json.slackWebhookUrl }}",
+        "url": "https://api.resend.com/emails",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"text\": {{ JSON.stringify(\"Nouveau ticket à cadrer : \" + $json.issueKey + \" — \" + $json.summary) }},\n  \"blocks\": [\n    {\n      \"type\": \"header\",\n      \"text\": { \"type\": \"plain_text\", \"text\": \"🎨 Nouveau ticket à cadrer\", \"emoji\": true }\n    },\n    {\n      \"type\": \"section\",\n      \"fields\": [\n        { \"type\": \"mrkdwn\", \"text\": {{ JSON.stringify(\"*Ticket*\\n<\" + $json.issueUrl + \"|\" + $json.issueKey + \" — \" + $json.summary + \">\") }} },\n        { \"type\": \"mrkdwn\", \"text\": {{ JSON.stringify(\"*Rapporteur*\\n\" + $json.reporterName) }} }\n      ]\n    },\n    {\n      \"type\": \"section\",\n      \"text\": { \"type\": \"mrkdwn\", \"text\": {{ JSON.stringify(\"*Description*\\n\" + $json.descriptionShort) }} }\n    },\n    { \"type\": \"divider\" },\n    {\n      \"type\": \"section\",\n      \"text\": { \"type\": \"mrkdwn\", \"text\": {{ JSON.stringify(\"*Questions proposées par l'IA :*\\n\" + $json.questionsBulleted) }} }\n    },\n    {\n      \"type\": \"actions\",\n      \"elements\": [\n        {\n          \"type\": \"button\",\n          \"text\": { \"type\": \"plain_text\", \"text\": \"✅ Choisir mes questions →\", \"emoji\": true },\n          \"style\": \"primary\",\n          \"url\": {{ JSON.stringify($json.formFullUrl) }}\n        }\n      ]\n    }\n  ]\n}",
+        "jsonBody": "={\n  \"from\": {{ JSON.stringify($json.senderName + \" <\" + $json.senderEmail + \">\") }},\n  \"to\": [{{ JSON.stringify($json.recipientEmail) }}],\n  \"subject\": {{ JSON.stringify($json.emailSubject) }},\n  \"html\": {{ JSON.stringify($json.emailHtml) }}\n}",
         "options": {}
       },
-      "id": "node-slack",
-      "name": "Slack: Send Message",
+      "id": "node-resend",
+      "name": "Resend: Send Email",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
         2000,
         220
-      ]
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_RESEND_CRED_ID",
+          "name": "Resend API"
+        }
+      }
     }
   ],
   "connections": {
@@ -337,7 +366,7 @@
       "main": [
         [
           {
-            "node": "Slack: Send Message",
+            "node": "Resend: Send Email",
             "type": "main",
             "index": 0
           }

@@ -1,11 +1,11 @@
-# Automatisation Jira → Slack → Jira (n8n)
+# Automatisation Jira → Email → Jira (n8n)
 
 Automatisation pour Product Designer chez RMC BFM.
 
 **Ce que ça fait :**
 1. Toutes les 3 minutes, n8n vérifie si un ticket Jira vient d'être assigné à toi en statut **`A FAIRE`**
 2. Si c'est le cas (et que tu n'as pas déjà commenté le ticket), une IA (Claude) lit la description et génère une liste de questions de cadrage personnalisées
-3. Un message arrive dans ton canal Slack avec : titre du ticket, rapporteur, lien direct, et un **bouton "Choisir mes questions →"**
+3. Un email arrive dans ta boîte pro avec : titre du ticket, rapporteur, description, **liste des questions générées**, et un **bouton "Choisir mes questions →"**
 4. Le bouton ouvre un formulaire web où tu coches les questions à poser + tu peux en ajouter à la main
 5. À la validation, n8n poste un commentaire sur le ticket Jira avec tes questions sélectionnées, mentionnant le rapporteur
 
@@ -16,7 +16,7 @@ Automatisation pour Product Designer chez RMC BFM.
 1. [Architecture](#architecture)
 2. [Prérequis (à faire AVANT d'importer)](#prérequis)
 3. [Étape 1 — Token API Jira](#étape-1--token-api-jira)
-4. [Étape 2 — Slack Incoming Webhook](#étape-2--slack-incoming-webhook)
+4. [Étape 2 — Clé API Resend (envoi d'email)](#étape-2--clé-api-resend-envoi-demail)
 5. [Étape 3 — Clé API Claude (Anthropic)](#étape-3--clé-api-claude-anthropic)
 6. [Étape 4 — Importer Workflow 2 (formulaire) en premier](#étape-4--importer-workflow-2)
 7. [Étape 5 — Importer Workflow 1 (poll Jira)](#étape-5--importer-workflow-1)
@@ -43,10 +43,10 @@ Automatisation pour Product Designer chez RMC BFM.
 │    commenté par moi     │
 │  - Claude génère les    │
 │    questions            │
-│  - Envoi Slack          │
+│  - Envoi email (Resend) │
 └─────────┬───────────────┘
           │
-          ↓ (lien dans le message Slack)
+          ↓ (bouton dans l'email)
           │
 ┌─────────▼───────────────┐
 │   Workflow 2 (form)     │
@@ -70,7 +70,7 @@ Tu dois récupérer **3 secrets** avant de commencer :
 | Secret | Où le créer | Format attendu |
 |---|---|---|
 | Token API Jira | `id.atlassian.com` | chaîne de ~190 caractères |
-| Slack Incoming Webhook | `api.slack.com/apps` | URL `https://hooks.slack.com/...` |
+| Clé API Resend | `resend.com` (gratuit) | `re_...` |
 | Clé API Anthropic | `console.anthropic.com` | `sk-ant-...` |
 
 Garde-les dans un endroit sûr (1Password, gestionnaire de mots de passe). On va les coller dans n8n à l'étape suivante.
@@ -96,22 +96,39 @@ API Token : ATATT3xFfGF0...
 
 ---
 
-## Étape 2 — Slack Incoming Webhook
+## Étape 2 — Clé API Resend (envoi d'email)
 
-L'objectif : un webhook permet d'envoyer des messages dans un canal Slack **sans avoir besoin d'être admin du workspace** dans la plupart des configs.
+Resend est un service d'envoi d'emails dédié aux développeurs. **Gratuit jusqu'à 3000 emails/mois** (largement assez), pas de carte bancaire requise.
 
-### 2.1 — Crée un canal dédié (si pas déjà fait)
-Dans Slack, crée un canal `#design-tickets-cadrage` (ou autre nom de ton choix). Privé recommandé pour ne pas spammer.
+### 2.1 — Crée ton compte Resend
 
-### 2.2 — Demande/installe l'app "Incoming Webhooks"
-1. Va sur **https://[ton-workspace].slack.com/apps/A0F7XDUAZ-incoming-webhooks**
-   (sinon, dans Slack : "Apps" → recherche "Incoming Webhooks")
-2. Clique **"Add to Slack"**
-3. Choisis ton canal `#design-tickets-cadrage`
-4. Clique **"Add Incoming Webhook integration"**
-5. **Copie la "Webhook URL"** — elle ressemble à `https://hooks.slack.com/services/T00.../B00.../xxxxx`
+1. Va sur **https://resend.com/signup**
+2. Inscris-toi avec **ton email pro RMC BFM** (c'est important, voir ci-dessous)
+3. Confirme ton email via le lien reçu
 
-> **Si "Add to Slack" est bloqué par ton admin** : demande-lui simplement d'autoriser l'app "Incoming Webhooks" (c'est une app officielle Slack, c'est généralement validé sans soucis car non-intrusive).
+### 2.2 — Récupère ta clé API
+
+1. Une fois connectée, va dans **"API Keys"** (menu de gauche)
+2. Clique **"Create API Key"**
+3. Nomme-la `n8n-jira-design`
+4. Permission : **"Sending access"** (suffisant)
+5. Domain : laisse **"All domains"**
+6. Clique **"Add"** → **copie immédiatement la clé** (`re_...`)
+
+### 2.3 — Adresse expéditrice (sender)
+
+⚠️ **À savoir sur Resend en mode gratuit sans domaine vérifié :**
+- Tu peux envoyer **uniquement vers l'email avec lequel tu t'es inscrite** (ton email pro)
+- L'expéditeur (from) doit être `onboarding@resend.dev` (déjà configuré dans le workflow)
+- Tes emails arriveront donc avec un expéditeur `Cadrage Design Bot <onboarding@resend.dev>`
+
+C'est suffisant pour ton usage perso. Si tu veux un expéditeur custom (ex. `cadrage@rmcbfm.fr`), il faudrait vérifier le domaine `rmcbfm.fr` côté Resend, ce qui demande l'accord de l'IT (enregistrements DNS). Pas indispensable pour démarrer.
+
+**À garder pour la suite :**
+```
+Resend API Key   : re_xxxxxxxxxxxxxxxxxxxx
+Email destinataire : ton.email@rmcbfm.fr
+```
 
 ---
 
@@ -170,12 +187,12 @@ Le workflow contient 2 nodes Webhook :
 ## Étape 5 — Importer Workflow 1
 
 1. Dans n8n, **"Add Workflow"** → **"Import from File"**
-2. Sélectionne **`workflows/01-jira-poll-to-slack.json`**
+2. Sélectionne **`workflows/01-jira-poll-to-email.json`**
 
 ### 5.1 — Configurer les credentials
 
 **Credential Jira** (réutilise celui créé à l'étape 4.1) :
-- Click sur le node **"Jira: Search Issues"**
+- Clique sur le node **"Jira: Search Issues"**
 - Sélectionne ton credential Jira existant dans le dropdown
 
 **Credential Anthropic** :
@@ -187,17 +204,29 @@ Le workflow contient 2 nodes Webhook :
   - **Header Value** : ta clé `sk-ant-...` de l'Étape 3
 - Save
 
+**Credential Resend** :
+- Clique sur le node **"Resend: Send Email"**
+- Champ "Authentication" → **"Generic Credential Type"** → **"Header Auth"**
+- "Create New" :
+  - **Name** : `Resend API`
+  - **Header Name** : `Authorization`
+  - **Header Value** : `Bearer re_xxxxxxxxxxxx` (préfixe "Bearer " + ta clé Resend de l'Étape 2.2)
+- Save
+
 ### 5.2 — Mettre à jour les variables du workflow
 
 Clique sur le node **"Set: Config"** (le tout premier après le Schedule). Modifie les valeurs :
 
 | Champ | Valeur à mettre |
 |---|---|
-| `slackWebhookUrl` | URL Slack de l'Étape 2.2 |
+| `recipientEmail` | Ton email pro RMC BFM (où tu veux recevoir les notifs) |
+| `senderEmail` | `onboarding@resend.dev` (laisse tel quel) |
+| `senderName` | `Cadrage Design Bot` (ou ce que tu veux comme nom d'expéditeur) |
 | `formUrl` | URL "Webhook: Show Form" de l'Étape 4.3.a |
 | `myAccountId` | (voir 5.3 ci-dessous) |
 | `projectKey` | `DA` (ton projet — vu sur ta capture, les tickets sont `DA-xxxx`) |
 | `triggerStatus` | `A FAIRE` (ou exactement le nom de ton statut, casse comprise) |
+| `jiraDomain` | `https://[xxx].atlassian.net` (idem que dans le credential Jira) |
 
 ### 5.3 — Trouver ton `myAccountId` Jira
 
@@ -227,8 +256,8 @@ Bascule **"Active"** → ON.
 1. Dans Jira, prends un ticket existant assigné à toi en statut autre que `A FAIRE`
 2. Passe-le en statut **`A FAIRE`**
 3. Attends maximum 3 minutes
-4. ✅ Tu devrais recevoir un message Slack dans `#design-tickets-cadrage`
-5. Clique sur **"Choisir mes questions →"**
+4. ✅ Tu devrais recevoir un email dans ta boîte pro (vérifie aussi le dossier "Spam" à la première réception)
+5. Clique sur le bouton **"✅ Choisir mes questions →"** dans l'email
 6. Le formulaire s'ouvre avec les checkboxes générées par Claude
 7. Coche-en quelques-unes, ajoute du texte libre dans le champ "Questions supplémentaires"
 8. Clique **"Valider"**
@@ -257,10 +286,16 @@ Le "cerveau" de l'IA est dans **`prompts/ai-system-prompt.md`**. Le contenu de c
 
 ## Dépannage
 
-**Aucun message Slack ne tombe**
+**Aucun email ne tombe**
 - Vérifie que le Workflow 1 est bien `Active`
+- Vérifie le dossier **Spam / Indésirables** de ta boîte pro (à la première réception, l'expéditeur `onboarding@resend.dev` peut être catégorisé comme spam — marque-le "non-spam" pour la suite)
 - Va dans n8n "Executions" → tu vois si le polling tourne
 - Le filtre JQL ne matche peut-être rien : ouvre la dernière exécution → regarde l'output du node "Jira: Search Issues" — si vide, ton ticket n'est pas pris (mauvais statut, mauvais accountId, mauvais projet)
+- Vérifie ton dashboard Resend (`resend.com/emails`) : si l'email a été envoyé mais pas reçu, c'est probablement un filtre côté boîte pro
+
+**Erreur "validation_error" depuis Resend**
+- Sur le plan gratuit Resend sans domaine vérifié, **l'email destinataire doit être celui avec lequel tu t'es inscrite à Resend**. Si tu utilises une adresse différente, ça refuse.
+- Solution : utilise la même adresse pour `recipientEmail` que celle de ton compte Resend
 
 **"Invalid status" / "issue not found"**
 - Le nom du statut doit être **exactement** celui de Jira, accents et casse compris
