@@ -95,7 +95,7 @@
     {
       "parameters": {
         "method": "GET",
-        "url": "={{ $json.jiraDomain }}/rest/api/3/search",
+        "url": "={{ $json.jiraDomain }}/rest/api/3/search/jql",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpBasicAuth",
         "sendQuery": true,
