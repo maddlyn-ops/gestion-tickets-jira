@@ -1,0 +1,377 @@
+{
+  "name": "02 — Form → Jira Comment",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "jira-form",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "node-webhook-get",
+      "name": "Webhook: Show Form",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        200
+      ],
+      "webhookId": "jira-form-show"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Décode le payload base64url et génère le HTML du formulaire\n\nconst dataParam = $input.item.json.query?.data || '';\n\nlet payload;\ntry {\n  // base64url → base64\n  const b64 = dataParam.replace(/-/g, '+').replace(/_/g, '/');\n  const decoded = Buffer.from(b64, 'base64').toString('utf-8');\n  payload = JSON.parse(decoded);\n} catch (e) {\n  return {\n    json: {\n      html: `<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>Erreur</title></head><body style=\"font-family:system-ui;padding:40px;max-width:600px;margin:auto;color:#333\"><h1>⚠️ Lien invalide</h1><p>Le paramètre <code>?data=...</code> est manquant ou corrompu. Retourne dans Slack et reclique sur le bouton du message.</p></body></html>`,\n    },\n  };\n}\n\nconst submitUrl = $('Set: Form Config').first().json.submitUrl;\n\nconst esc = (s) => String(s)\n  .replace(/&/g, '&amp;')\n  .replace(/</g, '&lt;')\n  .replace(/>/g, '&gt;')\n  .replace(/\"/g, '&quot;')\n  .replace(/'/g, '&#39;');\n\nconst checkboxesHtml = payload.q.map((q, i) => `\n  <label class=\"q-item\">\n    <input type=\"checkbox\" name=\"q\" value=\"${esc(q)}\" checked>\n    <span>${esc(q)}</span>\n  </label>`).join('');\n\nconst html = `<!DOCTYPE html>\n<html lang=\"fr\">\n<head>\n  <meta charset=\"utf-8\">\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n  <title>Cadrage — ${esc(payload.k)}</title>\n  <style>\n    * { box-sizing: border-box; }\n    body { font-family: -apple-system, system-ui, 'Segoe UI', sans-serif; background: #f4f5f7; color: #172b4d; margin: 0; padding: 24px 16px; }\n    .container { max-width: 720px; margin: 0 auto; background: white; border-radius: 8px; padding: 32px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }\n    h1 { font-size: 18px; color: #6b778c; font-weight: 500; margin: 0 0 4px; }\n    h2 { font-size: 22px; margin: 0 0 24px; line-height: 1.3; }\n    h3 { font-size: 14px; color: #6b778c; text-transform: uppercase; letter-spacing: 0.5px; margin: 32px 0 12px; }\n    .q-item { display: flex; gap: 12px; align-items: flex-start; padding: 12px; border-radius: 6px; cursor: pointer; transition: background 0.15s; margin-bottom: 4px; }\n    .q-item:hover { background: #f4f5f7; }\n    .q-item input { margin-top: 4px; flex-shrink: 0; width: 18px; height: 18px; cursor: pointer; }\n    .q-item span { flex: 1; line-height: 1.5; }\n    textarea { width: 100%; min-height: 100px; padding: 12px; border: 2px solid #dfe1e6; border-radius: 6px; font-family: inherit; font-size: 14px; resize: vertical; }\n    textarea:focus { outline: none; border-color: #4c9aff; }\n    button { background: #0052cc; color: white; border: none; padding: 12px 24px; border-radius: 6px; font-size: 15px; font-weight: 600; cursor: pointer; margin-top: 24px; width: 100%; }\n    button:hover { background: #0747a6; }\n    button:disabled { background: #c1c7d0; cursor: not-allowed; }\n    .reporter { display: inline-block; background: #e9f2ff; color: #0747a6; padding: 4px 10px; border-radius: 12px; font-size: 13px; font-weight: 500; }\n    .hint { font-size: 13px; color: #6b778c; margin: -4px 0 12px; }\n    .actions-bar { display: flex; gap: 8px; margin-bottom: 8px; }\n    .actions-bar button { flex: 1; background: white; color: #6b778c; border: 1px solid #dfe1e6; padding: 6px 12px; font-size: 13px; font-weight: 500; margin: 0; }\n    .actions-bar button:hover { background: #f4f5f7; color: #172b4d; }\n  </style>\n</head>\n<body>\n  <div class=\"container\">\n    <h1>Cadrage du ticket ${esc(payload.k)}</h1>\n    <h2>${esc(payload.s)}</h2>\n    <p>Rapporteur : <span class=\"reporter\">${esc(payload.rn)}</span></p>\n\n    <form id=\"form\">\n      <input type=\"hidden\" name=\"issueKey\" value=\"${esc(payload.k)}\">\n      <input type=\"hidden\" name=\"reporterAccountId\" value=\"${esc(payload.r)}\">\n      <input type=\"hidden\" name=\"reporterName\" value=\"${esc(payload.rn)}\">\n\n      <h3>Questions proposées</h3>\n      <p class=\"hint\">Décoche celles qui ne s'appliquent pas. Toutes sont cochées par défaut.</p>\n      <div class=\"actions-bar\">\n        <button type=\"button\" onclick=\"toggleAll(true)\">Tout cocher</button>\n        <button type=\"button\" onclick=\"toggleAll(false)\">Tout décocher</button>\n      </div>\n      ${checkboxesHtml}\n\n      <h3>Questions supplémentaires (optionnel)</h3>\n      <p class=\"hint\">Une question par ligne. Elles seront ajoutées à la fin du commentaire.</p>\n      <textarea name=\"customQuestions\" placeholder=\"Ex. : Quel est le délai de mise en prod souhaité ?\"></textarea>\n\n      <button type=\"submit\" id=\"submit\">✓ Valider et poster sur Jira</button>\n    </form>\n  </div>\n\n  <script>\n    function toggleAll(state) {\n      document.querySelectorAll('input[name=\"q\"]').forEach(cb => cb.checked = state);\n    }\n    document.getElementById('form').addEventListener('submit', async (e) => {\n      e.preventDefault();\n      const btn = document.getElementById('submit');\n      btn.disabled = true; btn.textContent = '⏳ Envoi en cours...';\n      const fd = new FormData(e.target);\n      const data = {\n        issueKey: fd.get('issueKey'),\n        reporterAccountId: fd.get('reporterAccountId'),\n        reporterName: fd.get('reporterName'),\n        questions: fd.getAll('q'),\n        customQuestions: fd.get('customQuestions') || '',\n      };\n      try {\n        const r = await fetch('${submitUrl}', {\n          method: 'POST',\n          headers: { 'Content-Type': 'application/json' },\n          body: JSON.stringify(data),\n        });\n        if (!r.ok) throw new Error('HTTP ' + r.status);\n        const html = await r.text();\n        document.open(); document.write(html); document.close();\n      } catch (err) {\n        btn.disabled = false; btn.textContent = '✓ Valider et poster sur Jira';\n        alert('Erreur : ' + err.message);\n      }\n    });\n  </script>\n</body>\n</html>`;\n\nreturn { json: { html } };\n"
+      },
+      "id": "node-build-html",
+      "name": "Code: Build HTML",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        680,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.html }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "text/html; charset=utf-8"
+              }
+            ]
+          }
+        }
+      },
+      "id": "node-respond-form",
+      "name": "Respond: HTML Form",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        900,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "f1",
+              "name": "submitUrl",
+              "value": "https://your-n8n.example.com/webhook/jira-form-submit",
+              "type": "string"
+            },
+            {
+              "id": "f2",
+              "name": "jiraDomain",
+              "value": "https://YOUR-DOMAIN.atlassian.net",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "node-form-config",
+      "name": "Set: Form Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        460,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "jira-form-submit",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "node-webhook-post",
+      "name": "Webhook: Submit Form",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        500
+      ],
+      "webhookId": "jira-form-submit"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Construit le payload ADF (Atlassian Document Format) pour le commentaire Jira\n\nconst body = $input.item.json.body || $input.item.json;\n\nconst issueKey = body.issueKey;\nconst reporterAccountId = body.reporterAccountId;\nconst reporterName = body.reporterName || 'l\\'équipe';\nconst selectedQuestions = Array.isArray(body.questions) ? body.questions : [];\nconst customRaw = (body.customQuestions || '').trim();\n\n// Parse questions custom (une par ligne)\nconst customQuestions = customRaw\n  ? customRaw.split('\\n').map(s => s.trim()).filter(Boolean)\n  : [];\n\nconst allQuestions = [...selectedQuestions, ...customQuestions];\n\nif (allQuestions.length === 0) {\n  return {\n    json: {\n      issueKey,\n      skipPost: true,\n      errorMessage: 'Aucune question sélectionnée — rien à poster.',\n    },\n  };\n}\n\n// Construction du document ADF\nconst introContent = [\n  { type: 'text', text: 'Hello ' },\n];\nif (reporterAccountId) {\n  introContent.push({\n    type: 'mention',\n    attrs: { id: reporterAccountId, text: '@' + reporterName },\n  });\n} else {\n  introContent.push({ type: 'text', text: '@' + reporterName });\n}\nintroContent.push({\n  type: 'text',\n  text: ', avant de lancer le ticket voici mes quelques questions :',\n});\n\nconst bulletItems = allQuestions.map(q => ({\n  type: 'listItem',\n  content: [\n    {\n      type: 'paragraph',\n      content: [{ type: 'text', text: q }],\n    },\n  ],\n}));\n\nconst adfBody = {\n  type: 'doc',\n  version: 1,\n  content: [\n    { type: 'paragraph', content: introContent },\n    { type: 'bulletList', content: bulletItems },\n  ],\n};\n\nconst jiraDomain = $('Set: Form Config').first().json.jiraDomain;\n\nreturn {\n  json: {\n    issueKey,\n    skipPost: false,\n    jiraUrl: `${jiraDomain}/rest/api/3/issue/${issueKey}/comment`,\n    issueViewUrl: `${jiraDomain}/browse/${issueKey}`,\n    adfBody: { body: adfBody },\n    questionsCount: allQuestions.length,\n  },\n};\n"
+      },
+      "id": "node-build-adf",
+      "name": "Code: Build ADF Comment",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "fc1",
+              "leftValue": "={{ $json.skipPost }}",
+              "rightValue": false,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "node-if-post",
+      "name": "If: Has Questions",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        680,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.jiraUrl }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "content-type",
+              "value": "application/json"
+            },
+            {
+              "name": "accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.adfBody) }}",
+        "options": {}
+      },
+      "id": "node-jira-post",
+      "name": "Jira: Post Comment",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        900,
+        420
+      ],
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "REPLACE_WITH_JIRA_CRED_ID",
+          "name": "Jira Basic Auth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Page de confirmation après succès\nconst input = $input.item.json;\nconst src = $('Code: Build ADF Comment').item.json;\nconst issueKey = src.issueKey;\nconst issueUrl = src.issueViewUrl;\nconst count = src.questionsCount;\n\nconst html = `<!DOCTYPE html>\n<html lang=\"fr\">\n<head>\n  <meta charset=\"utf-8\">\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n  <title>Commentaire posté</title>\n  <style>\n    body { font-family: -apple-system, system-ui, sans-serif; background: #f4f5f7; color: #172b4d; margin: 0; padding: 60px 20px; text-align: center; }\n    .card { max-width: 480px; margin: 0 auto; background: white; border-radius: 8px; padding: 40px 32px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }\n    .check { font-size: 56px; margin-bottom: 16px; }\n    h1 { font-size: 22px; margin: 0 0 8px; }\n    p { color: #6b778c; line-height: 1.5; margin: 0 0 24px; }\n    a { display: inline-block; background: #0052cc; color: white; text-decoration: none; padding: 10px 20px; border-radius: 6px; font-weight: 600; }\n    a:hover { background: #0747a6; }\n  </style>\n</head>\n<body>\n  <div class=\"card\">\n    <div class=\"check\">✅</div>\n    <h1>C'est posté !</h1>\n    <p>${count} question${count > 1 ? 's' : ''} envoyée${count > 1 ? 's' : ''} en commentaire sur <strong>${issueKey}</strong>.</p>\n    <a href=\"${issueUrl}\" target=\"_blank\">Ouvrir le ticket dans Jira →</a>\n  </div>\n</body>\n</html>`;\n\nreturn { json: { html } };\n"
+      },
+      "id": "node-confirm-html",
+      "name": "Code: Build Confirm HTML",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.html }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "text/html; charset=utf-8"
+              }
+            ]
+          }
+        }
+      },
+      "id": "node-respond-confirm",
+      "name": "Respond: Confirmation",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1340,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Page d'erreur si aucune question sélectionnée\nconst src = $('Code: Build ADF Comment').item.json;\nconst html = `<!DOCTYPE html>\n<html lang=\"fr\"><head><meta charset=\"utf-8\"><title>Aucune question</title>\n<style>body{font-family:system-ui;background:#f4f5f7;padding:60px 20px;text-align:center}\n.card{max-width:480px;margin:0 auto;background:white;padding:40px 32px;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,0.08)}\nh1{margin:0 0 12px}p{color:#6b778c;line-height:1.5}\nbutton{background:#0052cc;color:white;border:none;padding:10px 20px;border-radius:6px;font-weight:600;cursor:pointer;margin-top:16px}</style>\n</head><body><div class=\"card\"><div style=\"font-size:48px\">⚠️</div>\n<h1>Aucune question sélectionnée</h1>\n<p>${src.errorMessage || 'Tu dois cocher au moins une question (ou en ajouter dans le champ libre) avant de valider.'}</p>\n<button onclick=\"history.back()\">← Retour au formulaire</button>\n</div></body></html>`;\nreturn { json: { html } };\n"
+      },
+      "id": "node-error-html",
+      "name": "Code: Build Error HTML",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        900,
+        620
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.html }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "text/html; charset=utf-8"
+              }
+            ]
+          }
+        }
+      },
+      "id": "node-respond-error",
+      "name": "Respond: Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1120,
+        620
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook: Show Form": {
+      "main": [
+        [
+          {
+            "node": "Set: Form Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set: Form Config": {
+      "main": [
+        [
+          {
+            "node": "Code: Build HTML",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code: Build HTML": {
+      "main": [
+        [
+          {
+            "node": "Respond: HTML Form",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook: Submit Form": {
+      "main": [
+        [
+          {
+            "node": "Code: Build ADF Comment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code: Build ADF Comment": {
+      "main": [
+        [
+          {
+            "node": "If: Has Questions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If: Has Questions": {
+      "main": [
+        [
+          {
+            "node": "Jira: Post Comment",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Code: Build Error HTML",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Jira: Post Comment": {
+      "main": [
+        [
+          {
+            "node": "Code: Build Confirm HTML",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code: Build Confirm HTML": {
+      "main": [
+        [
+          {
+            "node": "Respond: Confirmation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code: Build Error HTML": {
+      "main": [
+        [
+          {
+            "node": "Respond: Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null
+}

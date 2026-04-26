@@ -1,0 +1,352 @@
+{
+  "name": "01 — Jira Poll → Slack (cadrage tickets design)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 3
+            }
+          ]
+        }
+      },
+      "id": "node-schedule",
+      "name": "Schedule: every 3 min",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        240,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a1",
+              "name": "slackWebhookUrl",
+              "value": "https://hooks.slack.com/services/REPLACE/ME/HERE",
+              "type": "string"
+            },
+            {
+              "id": "a2",
+              "name": "formUrl",
+              "value": "https://your-n8n.example.com/webhook/jira-form",
+              "type": "string"
+            },
+            {
+              "id": "a3",
+              "name": "myAccountId",
+              "value": "REPLACE_WITH_YOUR_ACCOUNT_ID",
+              "type": "string"
+            },
+            {
+              "id": "a4",
+              "name": "projectKey",
+              "value": "DA",
+              "type": "string"
+            },
+            {
+              "id": "a5",
+              "name": "triggerStatus",
+              "value": "A FAIRE",
+              "type": "string"
+            },
+            {
+              "id": "a6",
+              "name": "jiraDomain",
+              "value": "https://YOUR-DOMAIN.atlassian.net",
+              "type": "string"
+            },
+            {
+              "id": "a7",
+              "name": "commentMarker",
+              "value": "avant de lancer le ticket voici mes quelques questions",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "node-config",
+      "name": "Set: Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        460,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.jiraDomain }}/rest/api/3/search",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "jql",
+              "value": "=assignee = \"{{ $json.myAccountId }}\" AND status = \"{{ $json.triggerStatus }}\" AND project = \"{{ $json.projectKey }}\""
+            },
+            {
+              "name": "fields",
+              "value": "summary,description,reporter,issuetype,status,comment"
+            },
+            {
+              "name": "expand",
+              "value": "renderedFields"
+            },
+            {
+              "name": "maxResults",
+              "value": "50"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "node-jira-search",
+      "name": "Jira: Search Issues",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        680,
+        300
+      ],
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "REPLACE_WITH_JIRA_CRED_ID",
+          "name": "Jira Basic Auth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "issues",
+        "options": {}
+      },
+      "id": "node-split-issues",
+      "name": "Split: per Issue",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        900,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Pour chaque ticket, on vérifie si on a déjà commenté avec la phrase d'amorce\n// (= si oui, on skip)\n\nconst marker = $('Set: Config').first().json.commentMarker;\nconst myAccountId = $('Set: Config').first().json.myAccountId;\nconst jiraDomain = $('Set: Config').first().json.jiraDomain;\n\nconst issue = $input.item.json;\nconst comments = issue?.fields?.comment?.comments || [];\n\nconst alreadyCommented = comments.some(c => {\n  const isMine = c?.author?.accountId === myAccountId;\n  if (!isMine) return false;\n  // ADF body : on cherche le marker dans le texte aplati\n  const flatText = JSON.stringify(c?.body || '').toLowerCase();\n  return flatText.includes(marker.toLowerCase());\n});\n\n// Aplatir la description (renderedFields.description = HTML, on enlève les tags)\nconst rawHtml = issue?.renderedFields?.description || '';\nconst descriptionText = rawHtml\n  .replace(/<br\\s*\\/?>(\\s*)/gi, '\\n')\n  .replace(/<\\/p>/gi, '\\n\\n')\n  .replace(/<[^>]+>/g, '')\n  .replace(/&nbsp;/g, ' ')\n  .replace(/&amp;/g, '&')\n  .replace(/&lt;/g, '<')\n  .replace(/&gt;/g, '>')\n  .replace(/&quot;/g, '\"')\n  .replace(/\\n{3,}/g, '\\n\\n')\n  .trim();\n\nreturn {\n  json: {\n    issueKey: issue.key,\n    issueUrl: `${jiraDomain}/browse/${issue.key}`,\n    summary: issue.fields.summary,\n    issueType: issue.fields.issuetype?.name || 'Story',\n    reporterName: issue.fields.reporter?.displayName || 'Inconnu',\n    reporterAccountId: issue.fields.reporter?.accountId || '',\n    descriptionText: descriptionText || '(pas de description)',\n    alreadyCommented,\n  },\n};\n"
+      },
+      "id": "node-prepare",
+      "name": "Code: Prepare + flatten",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.alreadyCommented }}",
+              "rightValue": false,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "node-filter",
+      "name": "Filter: Not Already Commented",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1340,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"claude-sonnet-4-6\",\n  \"max_tokens\": 1024,\n  \"system\": \"Tu es l'assistant d'une Product Designer senior chez RMC BFM, un groupe média français (BFM TV, RMC, RMC Sport, BFM Business, et leurs apps mobiles + sites web).\\n\\nTon rôle : à partir d'un ticket Jira de demande de design qui vient de lui être assigné, générer une liste de questions de cadrage pertinentes à poser au rapporteur AVANT qu'elle ne commence à designer.\\n\\nCONTEXTE PRODUIT :\\n- Périmètre : sites web (desktop/mobile/responsive) + apps natives (iOS, Android) des marques BFM TV, RMC, RMC Sport, BFM Business.\\n- Pas encore de design system officiel (en cours de construction). Toute proposition doit donc être pensée pour ne PAS bloquer / casser un futur DS — composants génériques, tokens cohérents, pas d'effet 'one-off' sur-spécifique.\\n- Stakeholders fréquents : Product Owners (qui rapportent souvent les tickets), développeurs (web et mobile), équipes éditoriales, équipes data/analytics.\\n\\nCE QUI MANQUE HABITUELLEMENT DANS LES TICKETS (priorité maximale dans tes questions) :\\n1. Les CAS D'ERREUR et CAS VIDES (que se passe-t-il si la donnée n'arrive pas, si l'API plante, si l'utilisateur n'a pas X, si le contenu est trop court/long...). C'est le trou n°1 dans les briefs.\\n2. Les CONTRAINTES TECHNIQUES et IMPLICATIONS DEV (qu'est-ce qui est faisable ? Quelle est la stack ? Y a-t-il des limites de perf, de poids, d'API tierces, de CMS ?). Sans ça, elle risque de proposer des choses infaisables ou hors-budget.\\n3. Les ENJEUX BUSINESS et OBJECTIFS DATA (pourquoi cette demande existe, quel KPI on cherche à bouger, quel est le succès mesurable, est-ce un test A/B ?). Sans ça, impossible d'arbitrer entre plusieurs options.\\n\\nCE QUE TU NE DOIS PAS REDEMANDER (souvent déjà fourni) :\\n- Le titre du ticket et sa description elle-même.\\n- L'identité du rapporteur.\\n\\nRÈGLES DE GÉNÉRATION :\\n- Génère entre 5 et 10 questions, classées de la plus critique à la moins critique.\\n- Adapte les questions au CONTENU SPÉCIFIQUE du ticket (lis bien la description).\\n- Ne pose PAS une question si la description y répond déjà clairement.\\n- Formule chaque question pour qu'elle soit ACTIONNABLE par le rapporteur.\\n- Pour les tickets touchant à des modules transverses (header, footer, navigation, fil d'ariane, recirculation, blocs articles), pense à demander la cohérence inter-marques.\\n- Pour les tickets touchant à du contenu Premium / abonnement, pense à demander le comportement non-Premium / fallback.\\n- Pour les tickets responsive / mobile-first, pense à demander explicitement les breakpoints et les comportements iOS vs Android s'il s'agit d'app native.\\n- Langue : français.\\n\\nFORMAT DE SORTIE — strict :\\nTu réponds UNIQUEMENT avec un JSON valide, sans aucun texte avant ou après, structuré comme suit :\\n\\n{\\n  \\\"questions\\\": [\\n    \\\"Première question ?\\\",\\n    \\\"Deuxième question ?\\\"\\n  ]\\n}\\n\\nPas de markdown, pas de bloc de code, pas d'explications. Juste le JSON.\",\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": {{ JSON.stringify(\"Voici un ticket Jira qui vient d'être assigné à la designer :\\n\\nTITRE : \" + $json.summary + \"\\n\\nRAPPORTEUR : \" + $json.reporterName + \"\\n\\nTYPE : \" + $json.issueType + \"\\n\\nDESCRIPTION :\\n\" + $json.descriptionText + \"\\n\\nGénère la liste des questions de cadrage selon les règles du system prompt.\") }}\n    }\n  ]\n}",
+        "options": {}
+      },
+      "id": "node-claude",
+      "name": "Claude: Generate Questions",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1560,
+        220
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_ANTHROPIC_CRED_ID",
+          "name": "Anthropic API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse la réponse de Claude et construit l'URL du formulaire\n\nconst claudeResponse = $input.item.json;\nconst rawText = claudeResponse?.content?.[0]?.text || '';\n\n// Tentative robuste de parsing : Claude peut parfois entourer de markdown\nlet questions = [];\ntry {\n  // Cherche le premier { et le dernier } pour extraire le JSON même si entouré de texte\n  const firstBrace = rawText.indexOf('{');\n  const lastBrace = rawText.lastIndexOf('}');\n  if (firstBrace === -1 || lastBrace === -1) throw new Error('Pas de JSON trouvé');\n  const jsonStr = rawText.substring(firstBrace, lastBrace + 1);\n  const parsed = JSON.parse(jsonStr);\n  questions = parsed.questions || [];\n} catch (e) {\n  // Fallback : on découpe par lignes commençant par - ou *\n  questions = rawText\n    .split('\\n')\n    .map(l => l.replace(/^[-*\\d.\\s]+/, '').trim())\n    .filter(l => l.endsWith('?') && l.length > 10);\n}\n\nif (questions.length === 0) {\n  questions = ['(Erreur de génération — pose tes questions à la main)'];\n}\n\n// Récupère les infos du ticket depuis le node Prepare\nconst prep = $('Code: Prepare + flatten').item.json;\nconst config = $('Set: Config').first().json;\n\n// Encode payload pour le formulaire\nconst payload = {\n  k: prep.issueKey,\n  s: prep.summary,\n  r: prep.reporterAccountId,\n  rn: prep.reporterName,\n  q: questions,\n};\nconst dataParam = Buffer.from(JSON.stringify(payload), 'utf-8').toString('base64url');\nconst formFullUrl = `${config.formUrl}?data=${dataParam}`;\n\n// Tronque la description pour Slack (limite 3000 chars par bloc)\nconst descShort = prep.descriptionText.length > 1500\n  ? prep.descriptionText.substring(0, 1500) + '…'\n  : prep.descriptionText;\n\nreturn {\n  json: {\n    issueKey: prep.issueKey,\n    issueUrl: prep.issueUrl,\n    summary: prep.summary,\n    reporterName: prep.reporterName,\n    descriptionShort: descShort,\n    questions,\n    questionsBulleted: questions.map((q, i) => `${i + 1}. ${q}`).join('\\n'),\n    formFullUrl,\n    slackWebhookUrl: config.slackWebhookUrl,\n  },\n};\n"
+      },
+      "id": "node-parse",
+      "name": "Code: Parse + Build Form URL",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1780,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.slackWebhookUrl }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"text\": {{ JSON.stringify(\"Nouveau ticket à cadrer : \" + $json.issueKey + \" — \" + $json.summary) }},\n  \"blocks\": [\n    {\n      \"type\": \"header\",\n      \"text\": { \"type\": \"plain_text\", \"text\": \"🎨 Nouveau ticket à cadrer\", \"emoji\": true }\n    },\n    {\n      \"type\": \"section\",\n      \"fields\": [\n        { \"type\": \"mrkdwn\", \"text\": {{ JSON.stringify(\"*Ticket*\\n<\" + $json.issueUrl + \"|\" + $json.issueKey + \" — \" + $json.summary + \">\") }} },\n        { \"type\": \"mrkdwn\", \"text\": {{ JSON.stringify(\"*Rapporteur*\\n\" + $json.reporterName) }} }\n      ]\n    },\n    {\n      \"type\": \"section\",\n      \"text\": { \"type\": \"mrkdwn\", \"text\": {{ JSON.stringify(\"*Description*\\n\" + $json.descriptionShort) }} }\n    },\n    { \"type\": \"divider\" },\n    {\n      \"type\": \"section\",\n      \"text\": { \"type\": \"mrkdwn\", \"text\": {{ JSON.stringify(\"*Questions proposées par l'IA :*\\n\" + $json.questionsBulleted) }} }\n    },\n    {\n      \"type\": \"actions\",\n      \"elements\": [\n        {\n          \"type\": \"button\",\n          \"text\": { \"type\": \"plain_text\", \"text\": \"✅ Choisir mes questions →\", \"emoji\": true },\n          \"style\": \"primary\",\n          \"url\": {{ JSON.stringify($json.formFullUrl) }}\n        }\n      ]\n    }\n  ]\n}",
+        "options": {}
+      },
+      "id": "node-slack",
+      "name": "Slack: Send Message",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2000,
+        220
+      ]
+    }
+  ],
+  "connections": {
+    "Schedule: every 3 min": {
+      "main": [
+        [
+          {
+            "node": "Set: Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set: Config": {
+      "main": [
+        [
+          {
+            "node": "Jira: Search Issues",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Jira: Search Issues": {
+      "main": [
+        [
+          {
+            "node": "Split: per Issue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split: per Issue": {
+      "main": [
+        [
+          {
+            "node": "Code: Prepare + flatten",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code: Prepare + flatten": {
+      "main": [
+        [
+          {
+            "node": "Filter: Not Already Commented",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter: Not Already Commented": {
+      "main": [
+        [
+          {
+            "node": "Claude: Generate Questions",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Claude: Generate Questions": {
+      "main": [
+        [
+          {
+            "node": "Code: Parse + Build Form URL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code: Parse + Build Form URL": {
+      "main": [
+        [
+          {
+            "node": "Slack: Send Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null
+}
