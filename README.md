@@ -3,10 +3,10 @@
 Automatisation pour Product Designer chez RMC BFM.
 
 **Ce que ça fait :**
-1. Toutes les 3 minutes, n8n vérifie si un ticket Jira vient d'être assigné à toi en statut **`A FAIRE`**
-2. Si c'est le cas (et que tu n'as pas déjà commenté le ticket), une IA (Claude) lit la description et génère une liste de questions de cadrage personnalisées
-3. Un email arrive dans ta boîte pro avec : titre du ticket, rapporteur, description, **liste des questions générées**, et un **bouton "Choisir mes questions →"**
-4. Le bouton ouvre un formulaire web où tu coches les questions à poser + tu peux en ajouter à la main
+1. Tous les jours **du lundi au vendredi à 12h00**, n8n vérifie si un ticket Jira vient d'être assigné à toi en statut **`A FAIRE`**
+2. Si c'est le cas (et que tu n'as pas déjà commenté le ticket), une IA (Claude) lit la description, **rédige un résumé en 2-3 phrases** et génère une liste de questions de cadrage personnalisées
+3. Un email arrive dans ta boîte pro avec : titre du ticket, rapporteur, **résumé IA**, description complète repliée (clic pour déplier), **liste des questions générées**, un bouton **"Voir le ticket"** et un bouton **"Choisir mes questions →"**
+4. Le bouton bleu ouvre un formulaire web où tu coches les questions à poser + tu peux en ajouter à la main
 5. À la validation, n8n poste un commentaire sur le ticket Jira avec tes questions sélectionnées, mentionnant le rapporteur
 
 ---
@@ -32,7 +32,7 @@ Automatisation pour Product Designer chez RMC BFM.
 ┌─────────────────────────┐
 │   Workflow 1 (poll)     │
 │                         │
-│  Schedule (3 min)       │
+│  Schedule (Lun-Ven 12h) │  ← cron : 0 12 * * 1-5
 │         ↓               │
 │  Jira: search tickets   │  ← JQL : assignee=currentUser()
 │  assignés à moi en      │         AND status="A FAIRE"
@@ -41,8 +41,8 @@ Automatisation pour Product Designer chez RMC BFM.
 │  Pour chaque ticket :   │
 │  - Skip si déjà         │
 │    commenté par moi     │
-│  - Claude génère les    │
-│    questions            │
+│  - Claude génère        │
+│    résumé + questions   │
 │  - Envoi email (Resend) │
 └─────────┬───────────────┘
           │
@@ -255,7 +255,7 @@ Bascule **"Active"** → ON.
 
 1. Dans Jira, prends un ticket existant assigné à toi en statut autre que `A FAIRE`
 2. Passe-le en statut **`A FAIRE`**
-3. Attends maximum 3 minutes
+3. Pour tester sans attendre midi : ouvre le Workflow 1 dans n8n et clique sur **"Execute Workflow"** (bouton play en haut). En prod, l'envoi se fait du lundi au vendredi à 12h00 pile.
 4. ✅ Tu devrais recevoir un email dans ta boîte pro (vérifie aussi le dossier "Spam" à la première réception)
 5. Clique sur le bouton **"✅ Choisir mes questions →"** dans l'email
 6. Le formulaire s'ouvre avec les checkboxes générées par Claude
