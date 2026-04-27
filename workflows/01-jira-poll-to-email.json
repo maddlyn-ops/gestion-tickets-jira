@@ -236,7 +236,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Parse la réponse de Claude (summary + questions) et construit le HTML de l'email simplifié\n// L'email ne montre QUE le résumé. La description et les questions sont visibles sur la page formulaire.\n\nconst claudeResponse = $input.item.json;\nconst rawText = claudeResponse?.content?.[0]?.text || '';\n\nlet summary = '';\nlet questions = [];\ntry {\n  const firstBrace = rawText.indexOf('{');\n  const lastBrace = rawText.lastIndexOf('}');\n  if (firstBrace === -1 || lastBrace === -1) throw new Error('Pas de JSON trouvé');\n  const jsonStr = rawText.substring(firstBrace, lastBrace + 1);\n  const parsed = JSON.parse(jsonStr);\n  summary = parsed.summary || '';\n  questions = parsed.questions || [];\n} catch (e) {\n  questions = rawText\n    .split('\\n')\n    .map(l => l.replace(/^[-*\\d.\\s]+/, '').trim())\n    .filter(l => l.endsWith('?') && l.length > 10);\n}\n\nif (questions.length === 0) {\n  questions = ['(Erreur de génération — pose tes questions à la main)'];\n}\nif (!summary) {\n  summary = '(Pas de résumé généré — clique sur \"Voir le ticket\" pour lire la description.)';\n}\n\nconst prep = $('Code: Prepare + flatten').item.json;\nconst config = $('Set: Config').first().json;\n\n// Tronque la description avant de l'envoyer dans le payload (limite la taille de l'URL)\nconst descForForm = prep.descriptionText.length > 6000\n  ? prep.descriptionText.substring(0, 6000) + '…'\n  : prep.descriptionText;\n\n// Encode payload pour le formulaire (avec summary + description en plus)\nconst payload = {\n  k: prep.issueKey,\n  s: prep.summary,\n  r: prep.reporterAccountId,\n  rn: prep.reporterName,\n  q: questions,\n  sm: summary,\n  d: descForForm,\n};\nconst dataParam = Buffer.from(JSON.stringify(payload), 'utf-8').toString('base64url');\nconst formFullUrl = `${config.formUrl}?data=${dataParam}`;\n\nconst esc = (s) => String(s)\n  .replace(/&/g, '&amp;')\n  .replace(/</g, '&lt;')\n  .replace(/>/g, '&gt;')\n  .replace(/\"/g, '&quot;')\n  .replace(/'/g, '&#39;');\n\nconst emailHtml = `<!DOCTYPE html>\n<html lang=\"fr\">\n<head><meta charset=\"utf-8\"></head>\n<body style=\"margin:0;padding:0;background:#f4f5f7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#172b4d\">\n  <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#f4f5f7;padding:32px 16px\">\n    <tr><td align=\"center\">\n      <table role=\"presentation\" width=\"640\" cellpadding=\"0\" cellspacing=\"0\" style=\"max-width:640px;background:#ffffff;border-radius:8px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.08)\">\n        <tr><td style=\"background:#0052cc;padding:20px 32px;color:#ffffff\">\n          <div style=\"font-size:13px;opacity:0.85;letter-spacing:0.5px;text-transform:uppercase\">🎨 Nouveau ticket à cadrer</div>\n          <div style=\"font-size:14px;margin-top:4px;opacity:0.9\">${esc(prep.issueKey)}</div>\n        </td></tr>\n        <tr><td style=\"padding:32px\">\n          <h1 style=\"margin:0 0 24px;font-size:22px;line-height:1.3;color:#172b4d\">${esc(prep.summary)}</h1>\n\n          <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"margin-bottom:24px\">\n            <tr>\n              <td style=\"padding:0 8px 0 0;width:50%;vertical-align:top\">\n                <div style=\"font-size:12px;text-transform:uppercase;color:#6b778c;letter-spacing:0.5px;margin-bottom:4px\">Rapporteur</div>\n                <div style=\"font-size:15px;color:#172b4d\">${esc(prep.reporterName)}</div>\n              </td>\n              <td style=\"padding:0 0 0 8px;width:50%;vertical-align:top\">\n                <div style=\"font-size:12px;text-transform:uppercase;color:#6b778c;letter-spacing:0.5px;margin-bottom:4px\">Ticket</div>\n                <div style=\"font-size:15px\"><a href=\"${esc(prep.issueUrl)}\" style=\"color:#0052cc;text-decoration:none\">Voir sur Jira →</a></div>\n              </td>\n            </tr>\n          </table>\n\n          <div style=\"font-size:12px;text-transform:uppercase;color:#6b778c;letter-spacing:0.5px;margin-bottom:8px\">Résumé IA</div>\n          <div style=\"background:#e9f2ff;border-left:3px solid #0052cc;padding:14px 16px;border-radius:4px;font-size:14px;line-height:1.6;color:#172b4d;margin-bottom:28px\">${esc(summary).replace(/\\n/g, '<br>')}</div>\n\n          <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\">\n            <tr>\n              <td align=\"center\" style=\"padding:0 4px\">\n                <a href=\"${esc(prep.issueUrl)}\" style=\"display:inline-block;background:#ffffff;color:#0052cc;border:1px solid #0052cc;text-decoration:none;padding:13px 22px;border-radius:6px;font-size:15px;font-weight:600\">Voir le ticket</a>\n              </td>\n              <td align=\"center\" style=\"padding:0 4px\">\n                <a href=\"${esc(formFullUrl)}\" style=\"display:inline-block;background:#0052cc;color:#ffffff;text-decoration:none;padding:14px 24px;border-radius:6px;font-size:15px;font-weight:600\">✅ Choisir mes questions →</a>\n              </td>\n            </tr>\n          </table>\n          <p style=\"text-align:center;font-size:12px;color:#6b778c;margin:16px 0 0\">Le bouton bleu ouvre la page de cadrage : tu y verras la description complète et les questions proposées par l'IA.</p>\n        </td></tr>\n      </table>\n    </td></tr>\n  </table>\n</body>\n</html>`;\n\nreturn {\n  json: {\n    issueKey: prep.issueKey,\n    summary: prep.summary,\n    emailSubject: `[Cadrage] ${prep.issueKey} — ${prep.summary}`,\n    emailHtml,\n    recipientEmail: config.recipientEmail,\n    senderEmail: config.senderEmail,\n    senderName: config.senderName,\n  },\n};\n"
+        "jsCode": "// Parse la réponse de Claude (summary + questions) et sort les données pour ce ticket.\n// L'email final est construit dans le node \"Code: Aggregate Email\" pour grouper tous les tickets.\n\nconst claudeResponse = $input.item.json;\nconst rawText = claudeResponse?.content?.[0]?.text || '';\n\nlet summary = '';\nlet questions = [];\ntry {\n  const firstBrace = rawText.indexOf('{');\n  const lastBrace = rawText.lastIndexOf('}');\n  if (firstBrace === -1 || lastBrace === -1) throw new Error('Pas de JSON trouvé');\n  const jsonStr = rawText.substring(firstBrace, lastBrace + 1);\n  const parsed = JSON.parse(jsonStr);\n  summary = parsed.summary || '';\n  questions = parsed.questions || [];\n} catch (e) {\n  questions = rawText\n    .split('\\n')\n    .map(l => l.replace(/^[-*\\d.\\s]+/, '').trim())\n    .filter(l => l.endsWith('?') && l.length > 10);\n}\n\nif (questions.length === 0) {\n  questions = ['(Erreur de génération — pose tes questions à la main)'];\n}\nif (!summary) {\n  summary = '(Pas de résumé généré — clique sur \"Voir le ticket\" pour lire la description.)';\n}\n\nconst prep = $('Code: Prepare + flatten').item.json;\nconst config = $('Set: Config').first().json;\n\nconst descForForm = prep.descriptionText.length > 6000\n  ? prep.descriptionText.substring(0, 6000) + '…'\n  : prep.descriptionText;\n\nconst payload = {\n  k: prep.issueKey,\n  s: prep.summary,\n  r: prep.reporterAccountId,\n  rn: prep.reporterName,\n  q: questions,\n  sm: summary,\n  d: descForForm,\n};\nconst dataParam = Buffer.from(JSON.stringify(payload), 'utf-8').toString('base64url');\nconst formFullUrl = `${config.formUrl}?data=${dataParam}`;\n\nreturn {\n  json: {\n    issueKey: prep.issueKey,\n    issueUrl: prep.issueUrl,\n    ticketSummary: prep.summary,\n    reporterName: prep.reporterName,\n    aiSummary: summary,\n    formUrl: formFullUrl,\n  },\n};\n"
       },
       "id": "node-parse",
       "name": "Code: Parse + Build Form URL",
@@ -272,7 +272,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        2000,
+        2120,
         220
       ],
       "credentials": {
@@ -281,6 +281,20 @@
           "name": "Resend API"
         }
       }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Agrège tous les tickets dans UN seul email.\n// IMPORTANT : ce node doit être en mode \"Run Once for All Items\" (sélecteur en haut du node).\n\nconst items = $input.all();\nif (items.length === 0) return [];\n\nconst config = $('Set: Config').first().json;\n\nconst esc = (s) => String(s)\n  .replace(/&/g, '&amp;')\n  .replace(/</g, '&lt;')\n  .replace(/>/g, '&gt;')\n  .replace(/\"/g, '&quot;')\n  .replace(/'/g, '&#39;');\n\nconst ticketCardsHtml = items.map((it, idx) => {\n  const t = it.json;\n  const isLast = idx === items.length - 1;\n  return `\n    <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"margin-bottom:${isLast ? 0 : 16}px;background:#f4f5f7;border-radius:8px\">\n      <tr><td style=\"padding:20px 24px\">\n        <div style=\"display:inline-block;background:#deebff;color:#0747a6;padding:3px 8px;border-radius:4px;font-size:12px;font-weight:600;letter-spacing:0.5px;margin-bottom:8px\">${esc(t.issueKey)}</div>\n        <h2 style=\"margin:0 0 6px;font-size:17px;line-height:1.3;color:#172b4d;font-weight:600\">${esc(t.ticketSummary)}</h2>\n        <div style=\"font-size:13px;color:#5e6c84;margin-bottom:14px\">Demandé par ${esc(t.reporterName)}</div>\n        <div style=\"background:#ffffff;border-left:3px solid #0052cc;padding:12px 14px;border-radius:4px;font-size:14px;line-height:1.5;color:#172b4d;margin-bottom:16px\">${esc(t.aiSummary).replace(/\\n/g, '<br>')}</div>\n        <table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\">\n          <tr>\n            <td style=\"padding:0 6px 0 0\">\n              <a href=\"${esc(t.issueUrl)}\" style=\"display:inline-block;background:#ffffff;color:#0052cc;border:1px solid #0052cc;text-decoration:none;padding:9px 16px;border-radius:6px;font-size:13px;font-weight:600\">Voir le ticket</a>\n            </td>\n            <td style=\"padding:0\">\n              <a href=\"${esc(t.formUrl)}\" style=\"display:inline-block;background:#0052cc;color:#ffffff;text-decoration:none;padding:10px 16px;border-radius:6px;font-size:13px;font-weight:600\">✅ Choisir mes questions →</a>\n            </td>\n          </tr>\n        </table>\n      </td></tr>\n    </table>`;\n}).join('');\n\nconst headerLabel = items.length === 1\n  ? '🎨 1 nouveau ticket à cadrer'\n  : `🎨 ${items.length} nouveaux tickets à cadrer`;\n\nconst subject = items.length === 1\n  ? `[Cadrage] ${items[0].json.issueKey} — ${items[0].json.ticketSummary}`\n  : `[Cadrage] ${items.length} nouveaux tickets à cadrer aujourd'hui`;\n\nconst emailHtml = `<!DOCTYPE html>\n<html lang=\"fr\">\n<head><meta charset=\"utf-8\"></head>\n<body style=\"margin:0;padding:0;background:#f4f5f7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#172b4d\">\n  <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#f4f5f7;padding:32px 16px\">\n    <tr><td align=\"center\">\n      <table role=\"presentation\" width=\"640\" cellpadding=\"0\" cellspacing=\"0\" style=\"max-width:640px;background:#ffffff;border-radius:8px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.08)\">\n        <tr><td style=\"background:#0052cc;padding:24px 32px;color:#ffffff\">\n          <div style=\"font-size:14px;font-weight:600;letter-spacing:0.3px\">${headerLabel}</div>\n        </td></tr>\n        <tr><td style=\"padding:24px 32px\">\n          ${ticketCardsHtml}\n          <p style=\"text-align:center;font-size:12px;color:#6b778c;margin:20px 0 0\">Le bouton bleu ouvre la page de cadrage : tu y verras la description complète et les questions proposées par l'IA.</p>\n        </td></tr>\n      </table>\n    </td></tr>\n  </table>\n</body>\n</html>`;\n\nreturn [{\n  json: {\n    emailSubject: subject,\n    emailHtml,\n    recipientEmail: config.recipientEmail,\n    senderEmail: config.senderEmail,\n    senderName: config.senderName,\n    ticketCount: items.length,\n  }\n}];\n"
+      },
+      "id": "node-aggregate",
+      "name": "Code: Aggregate Email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1900,
+        220
+      ]
     }
   ],
   "connections": {
@@ -355,7 +369,7 @@
       "main": [
         [
           {
-            "node": "Resend: Send Email",
+            "node": "Code: Aggregate Email",
             "type": "main",
             "index": 0
           }
@@ -367,6 +381,17 @@
         [
           {
             "node": "Set: Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code: Aggregate Email": {
+      "main": [
+        [
+          {
+            "node": "Resend: Send Email",
             "type": "main",
             "index": 0
           }
